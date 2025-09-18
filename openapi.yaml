@@ -1,0 +1,126 @@
+openapi: 3.1.0
+info:
+  title: Parakeet-TDT 0.6B v2 STT service
+  description: High-accuracy English speech-to-text (FastConformer-TDT) with optional
+    word/char/segment timestamps.
+  version: 0.0.1
+paths:
+  /healthz:
+    get:
+      tags:
+      - speech
+      summary: Liveness/readiness probe
+      operationId: health_healthz_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+  /transcribe:
+    post:
+      tags:
+      - speech
+      summary: Transcribe an audio file
+      operationId: transcribe_audio_transcribe_post
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Body_transcribe_audio_transcribe_post'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranscriptionResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /debug/cfg:
+    get:
+      tags:
+      - speech
+      summary: Show Cfg
+      operationId: show_cfg_debug_cfg_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+components:
+  schemas:
+    Body_transcribe_audio_transcribe_post:
+      properties:
+        file:
+          type: string
+          format: binary
+          title: File
+        include_timestamps:
+          type: boolean
+          title: Include Timestamps
+          description: Return char/word/segment offsets
+          default: false
+        should_chunk:
+          type: boolean
+          title: Should Chunk
+          description: If true (default), split long audio into ~60s VAD-aligned chunks
+            for batching
+          default: true
+      type: object
+      required:
+      - file
+      title: Body_transcribe_audio_transcribe_post
+    HTTPValidationError:
+      properties:
+        detail:
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          type: array
+          title: Detail
+      type: object
+      title: HTTPValidationError
+    TranscriptionResponse:
+      properties:
+        text:
+          type: string
+          title: Text
+          description: Plain transcription.
+        timestamps:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Timestamps
+          description: Word/segment/char offsets (see NeMo docs).
+      type: object
+      required:
+      - text
+      title: TranscriptionResponse
+    ValidationError:
+      properties:
+        loc:
+          items:
+            anyOf:
+            - type: string
+            - type: integer
+          type: array
+          title: Location
+        msg:
+          type: string
+          title: Message
+        type:
+          type: string
+          title: Error Type
+      type: object
+      required:
+      - loc
+      - msg
+      - type
+      title: ValidationError
