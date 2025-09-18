@@ -1,4 +1,4 @@
-# Parakeet-TDT 0.6B v2 FastAPI STT Service
+# Parakeet-TDT 0.6B v2 FastAPI STT Service - Modified for Truetime Meet Red5
 
 A production-ready FastAPI service for high-accuracy English speech-to-text using NVIDIA's Parakeet-TDT 0.6B v2 model. Implements both REST and WebSocket endpoints following the [OpenAI Audio API specification](https://platform.openai.com/docs/api-reference/audio) interface.
 
