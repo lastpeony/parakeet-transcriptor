@@ -8,8 +8,15 @@ import asyncio
 # Thread pool for CPU-bound VAD operations
 _vad_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="vad")
 
-vad_model, vad_utils = torch_hub_load("snakers4/silero-vad", "silero_vad")
-(_, _, _, VADIterator, _) = vad_utils
+# Load VADIterator class once (shared), but each instance gets its own model
+_, _vad_utils = torch_hub_load("snakers4/silero-vad", "silero_vad")
+(_, _, _, VADIterator, _) = _vad_utils
+
+
+def _load_vad_model():
+    """Load a fresh VAD model instance (CPU only, ~2MB)."""
+    model, _ = torch_hub_load("snakers4/silero-vad", "silero_vad")
+    return model
 
 # TODO: Update to read from .env
 SAMPLE_RATE              = 16_000         # model is trained for 16 kHz
@@ -30,8 +37,10 @@ class StreamingVAD:
     """
 
     def __init__(self):
+        # Each instance gets its own VAD model (thread-safe)
+        self._vad_model = _load_vad_model()
         self.vad = VADIterator(
-            vad_model,
+            self._vad_model,
             sampling_rate=SAMPLE_RATE,
             threshold=THRESHOLD,
             min_silence_duration_ms=MIN_SILENCE_MS,
