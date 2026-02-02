@@ -6,14 +6,11 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # --- CPU Threading Configuration (for VAD and audio preprocessing) ---
+# Set env vars BEFORE any torch import elsewhere
 NUM_THREADS = int(os.getenv("NUM_THREADS", str(os.cpu_count() or 4)))
 
 os.environ.setdefault("OMP_NUM_THREADS", str(NUM_THREADS))
 os.environ.setdefault("MKL_NUM_THREADS", str(NUM_THREADS))
-
-import torch
-torch.set_num_threads(NUM_THREADS)
-torch.set_num_interop_threads(min(NUM_THREADS, 4))
 
 MODEL_NAME = "nvidia/parakeet-tdt-0.6b-v2"  # Keep hardcoded as requested
 
@@ -35,4 +32,3 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger("parakeet_service")
-logger.info(f"CPU threading configured: {NUM_THREADS} threads (torch: {torch.get_num_threads()})")

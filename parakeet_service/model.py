@@ -5,7 +5,7 @@ import torch, asyncio
 import nemo.collections.asr as nemo_asr
 from omegaconf import open_dict
 
-from .config import MODEL_NAME, MODEL_PRECISION, DEVICE, logger
+from .config import MODEL_NAME, MODEL_PRECISION, DEVICE, NUM_THREADS, logger
 
 from parakeet_service.batchworker import batch_worker
 
@@ -43,6 +43,10 @@ async def lifespan(app):
     gc.collect()
     torch.cuda.empty_cache()
     logger.info("Memory cleanup complete")
+
+    # Configure CPU threading for VAD (after CUDA init)
+    torch.set_num_threads(NUM_THREADS)
+    logger.info("CPU threading: %d threads", torch.get_num_threads())
 
     app.state.asr_model = model
     logger.info("Model ready on %s", next(model.parameters()).device)
