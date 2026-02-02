@@ -1,9 +1,13 @@
 import asyncio, contextlib, logging, tempfile, pathlib, time, torch
 from typing import Union, List, Tuple
+from concurrent.futures import ThreadPoolExecutor
 from parakeet_service import model as mdl
 
 logger = logging.getLogger("batcher")
 logger.setLevel(logging.DEBUG)
+
+# Thread pool for model inference (CPU pre/post processing around GPU)
+_inference_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="inference")
 
 
 transcription_queue: asyncio.Queue[Tuple[str, Union[str, bytes]]] = asyncio.Queue()
@@ -46,9 +50,14 @@ async def batch_worker(model, batch_ms: float = 15.0, max_batch: int = 4):
         logger.debug("processing %d-file batch", len(batch))
 
         file_paths_for_model = [fp for _, fp in batch]
-        try:
+
+        def _run_inference():
             with torch.inference_mode():
-                outs = model.transcribe(file_paths_for_model, batch_size=len(file_paths_for_model))
+                return model.transcribe(file_paths_for_model, batch_size=len(file_paths_for_model))
+
+        try:
+            loop = asyncio.get_running_loop()
+            outs = await loop.run_in_executor(_inference_executor, _run_inference)
         except Exception as exc:
             logger.exception("ASR failed: %s", exc)
             for _ in batch:

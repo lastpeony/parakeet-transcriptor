@@ -2,6 +2,11 @@ from __future__ import annotations
 import io, wave, tempfile, numpy as np, torch
 from typing import List
 from torch.hub import load as torch_hub_load
+from concurrent.futures import ThreadPoolExecutor
+import asyncio
+
+# Thread pool for CPU-bound VAD operations
+_vad_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="vad")
 
 vad_model, vad_utils = torch_hub_load("snakers4/silero-vad", "silero_vad")
 (_, _, _, VADIterator, _) = vad_utils
@@ -70,3 +75,8 @@ class StreamingVAD:
                 out.extend(self._flush())
 
         return out
+
+    async def feed_async(self, frame_bytes: bytes) -> List[str]:
+        """Async wrapper that runs VAD in thread pool to avoid blocking event loop."""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(_vad_executor, self.feed, frame_bytes)
