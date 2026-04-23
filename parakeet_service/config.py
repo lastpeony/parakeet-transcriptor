@@ -12,7 +12,9 @@ NUM_THREADS = int(os.getenv("NUM_THREADS", str(os.cpu_count() or 4)))
 os.environ.setdefault("OMP_NUM_THREADS", str(NUM_THREADS))
 os.environ.setdefault("MKL_NUM_THREADS", str(NUM_THREADS))
 
-MODEL_NAME = "nvidia/parakeet-tdt-0.6b-v2"  # Keep hardcoded as requested
+MODEL_NAME = "nvidia/parakeet-tdt-0.6b-v2"
+# Path to a locally-mounted .nemo file. When set, skips network download.
+NEMO_MODEL_PATH = os.getenv("NEMO_MODEL_PATH", "")
 
 # Configuration from environment variables
 TARGET_SR = int(os.getenv("TARGET_SR", "16000"))          # model’s native sample-rate
