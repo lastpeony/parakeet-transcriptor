@@ -36,4 +36,8 @@ logging.basicConfig(
     force=True
 )
 
+# Suppress noisy internal loggers from NeMo and Lhotse
+for _noisy in ("nemo_logger", "lhotse", "nemo.collections", "nemo.core"):
+    logging.getLogger(_noisy).setLevel(logging.ERROR)
+
 logger = logging.getLogger("parakeet_service")

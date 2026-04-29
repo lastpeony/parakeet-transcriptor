@@ -69,7 +69,7 @@ async def batch_worker(model, batch_ms: float = 15.0, max_batch: int = 4):
         file_paths_for_model = [fp for _, fp in batch]
         try:
             with torch.inference_mode():
-                outs = model.transcribe(file_paths_for_model, batch_size=len(file_paths_for_model))
+                outs = model.transcribe(file_paths_for_model, batch_size=len(file_paths_for_model), verbose=False)
         except Exception as exc:
             logger.exception("ASR failed: %s", exc)
             for _ in batch:
@@ -85,10 +85,12 @@ async def batch_worker(model, batch_ms: float = 15.0, max_batch: int = 4):
                 transcription_queue.task_done()
                 continue
 
+            logger.info("[%s] %s", conn_id[:8], text)
+
             if conn_id in connection_queues:
                 await connection_queues[conn_id].put(text)
             else:
-                logger.warning(f"Connection ID {conn_id} not found. Client likely disconnected. Discarding result.")
+                logger.warning("Connection ID %s gone, discarding: %s", conn_id[:8], text)
 
             transcription_queue.task_done()
 
