@@ -1,6 +1,8 @@
-import asyncio, contextlib, logging, tempfile, pathlib, time, torch
+import asyncio, contextlib, logging, tempfile, pathlib, time, wave, torch
 from typing import Union, List, Tuple
 from parakeet_service import model as mdl
+
+MIN_CHUNK_DURATION_S = 0.5  # discard audio chunks shorter than this
 
 logger = logging.getLogger("batcher")
 logger.setLevel(logging.DEBUG)
@@ -13,12 +15,19 @@ connection_queues: dict[str, asyncio.Queue] = {}
 
 
 def _as_path(data: Union[str, bytes]) -> str:
-
     if isinstance(data, str):
         return data
     with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as f:
         f.write(data)
         return f.name
+
+
+def _wav_duration_s(path: str) -> float:
+    try:
+        with wave.open(path, "rb") as wf:
+            return wf.getnframes() / wf.getframerate()
+    except Exception:
+        return 0.0
 
 async def batch_worker(model, batch_ms: float = 15.0, max_batch: int = 4):
 
@@ -28,6 +37,12 @@ async def batch_worker(model, batch_ms: float = 15.0, max_batch: int = 4):
     while True:
         connection_id, chunk = await transcription_queue.get()
         file_path = _as_path(chunk)
+
+        if _wav_duration_s(file_path) < MIN_CHUNK_DURATION_S:
+            logger.debug("Discarding chunk shorter than %.1fs", MIN_CHUNK_DURATION_S)
+            pathlib.Path(file_path).unlink(missing_ok=True)
+            transcription_queue.task_done()
+            continue
 
         batch: List[Tuple[str, str]] = [(connection_id, file_path)]
 
@@ -39,6 +54,11 @@ async def batch_worker(model, batch_ms: float = 15.0, max_batch: int = 4):
             try:
                 nxt_connection_id, nxt_chunk = await asyncio.wait_for(transcription_queue.get(), timeout)
                 nxt_file_path = _as_path(nxt_chunk)
+                if _wav_duration_s(nxt_file_path) < MIN_CHUNK_DURATION_S:
+                    logger.debug("Discarding batch chunk shorter than %.1fs", MIN_CHUNK_DURATION_S)
+                    pathlib.Path(nxt_file_path).unlink(missing_ok=True)
+                    transcription_queue.task_done()
+                    continue
                 batch.append((nxt_connection_id, nxt_file_path))
             except asyncio.TimeoutError:
                 break
@@ -57,11 +77,14 @@ async def batch_worker(model, batch_ms: float = 15.0, max_batch: int = 4):
 
         # --- Distribute results to connection queues ---
         for (conn_id, _), result in zip(batch, outs):
-            text = getattr(result, "text", str(result))
+            text = getattr(result, "text", str(result)).strip()
 
+            if not text:
+                logger.debug("Empty transcription result for %s, skipping", conn_id)
+                transcription_queue.task_done()
+                continue
 
             if conn_id in connection_queues:
-
                 await connection_queues[conn_id].put(text)
             else:
                 logger.warning(f"Connection ID {conn_id} not found. Client likely disconnected. Discarding result.")

@@ -4,6 +4,7 @@ from typing import List
 from torch.hub import load as torch_hub_load
 from concurrent.futures import ThreadPoolExecutor
 import asyncio
+from parakeet_service.config import VAD_THRESHOLD
 
 # Thread pool for CPU-bound VAD operations
 _vad_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="vad")
@@ -18,10 +19,9 @@ def _load_vad_model():
     model, _ = torch_hub_load("snakers4/silero-vad", "silero_vad")
     return model
 
-# TODO: Update to read from .env
 SAMPLE_RATE              = 16_000         # model is trained for 16 kHz
 WINDOW_SAMPLES           = 512            # 32 ms frame
-THRESHOLD                = 0.60           # voice prob ≥ 0.60 → speech
+THRESHOLD                = VAD_THRESHOLD  # voice prob threshold — set via VAD_THRESHOLD env var
 MIN_SILENCE_MS           = 150            # flush after ≥150 ms quiet
 SPEECH_PAD_MS            = 120            # keep 120 ms context before/after
 MAX_SPEECH_MS            = 8_000          # hard stop at 8 s
