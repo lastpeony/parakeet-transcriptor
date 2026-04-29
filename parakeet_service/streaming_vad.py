@@ -22,9 +22,10 @@ def _load_vad_model():
 SAMPLE_RATE              = 16_000         # model is trained for 16 kHz
 WINDOW_SAMPLES           = 512            # 32 ms frame
 THRESHOLD                = 0.60           # voice prob ≥ 0.60 → speech
-MIN_SILENCE_MS           = 250            # flush after ≥250 ms quiet
+MIN_SILENCE_MS           = 150            # flush after ≥150 ms quiet
 SPEECH_PAD_MS            = 120            # keep 120 ms context before/after
 MAX_SPEECH_MS            = 8_000          # hard stop at 8 s
+PERIODIC_FLUSH_MS        = 6_000          # flush mid-speech if no silence event by 6 s
 
 # Helper: float32 → int16 PCM bytes
 def _f32_to_pcm16(frames: np.ndarray) -> bytes:
@@ -77,10 +78,10 @@ class StreamingVAD:
             self.buffer.extend(_f32_to_pcm16(window))
             self.speech_ms += 32
 
-            # Flush on trailing-silence event or max-length guard
+            # Flush on trailing-silence event or periodic guard
             if voice_event and voice_event.get("end"):
                 out.extend(self._flush())
-            elif self.speech_ms >= MAX_SPEECH_MS:
+            elif self.speech_ms >= PERIODIC_FLUSH_MS:
                 out.extend(self._flush())
 
         return out
