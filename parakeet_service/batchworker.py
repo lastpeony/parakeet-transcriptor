@@ -1,8 +1,9 @@
 import asyncio, contextlib, logging, tempfile, pathlib, time, wave, torch
 from typing import Union, List, Tuple
 from parakeet_service import model as mdl
+from parakeet_service.config import VAD_MIN_CHUNK_MS
 
-MIN_CHUNK_DURATION_S = 0.5  # discard audio chunks shorter than this
+MIN_CHUNK_DURATION_S = VAD_MIN_CHUNK_MS / 1000.0
 
 logger = logging.getLogger("batcher")
 logger.setLevel(logging.DEBUG)

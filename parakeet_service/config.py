@@ -22,8 +22,11 @@ MODEL_PRECISION = os.getenv("MODEL_PRECISION", "fp16")
 DEVICE = os.getenv("DEVICE", "cuda")
 BATCH_SIZE = int(os.getenv("BATCH_SIZE", "4"))
 MAX_AUDIO_DURATION = int(os.getenv("MAX_AUDIO_DURATION", "30"))   # seconds
-VAD_THRESHOLD = float(os.getenv("VAD_THRESHOLD", "0.5"))
-PROCESSING_TIMEOUT = int(os.getenv("PROCESSING_TIMEOUT", "60"))    # seconds
+VAD_THRESHOLD         = float(os.getenv("VAD_THRESHOLD",          "0.35"))
+VAD_MIN_SILENCE_MS    = int(os.getenv("VAD_MIN_SILENCE_MS",       "200"))
+VAD_SPEECH_PAD_MS     = int(os.getenv("VAD_SPEECH_PAD_MS",        "150"))
+VAD_PERIODIC_FLUSH_MS = int(os.getenv("VAD_PERIODIC_FLUSH_MS",    "6000"))
+VAD_MIN_CHUNK_MS      = int(os.getenv("VAD_MIN_CHUNK_MS",         "300"))
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
