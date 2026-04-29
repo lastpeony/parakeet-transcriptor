@@ -5,6 +5,9 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
+# Disable tqdm progress bars globally (must be set before any tqdm import)
+os.environ.setdefault("TQDM_DISABLE", "1")
+
 # --- CPU Threading Configuration (for VAD and audio preprocessing) ---
 # Set env vars BEFORE any torch import elsewhere
 NUM_THREADS = int(os.getenv("NUM_THREADS", str(os.cpu_count() or 4)))
@@ -36,7 +39,10 @@ logging.basicConfig(
     force=True
 )
 
-# Suppress noisy internal loggers from NeMo and Lhotse
+# Suppress noisy internal loggers from NeMo and Lhotse.
+# Root logger is also set to WARNING so Lhotse's "INFO root: Initializing..."
+# lines are silenced — our named loggers have explicit levels and are unaffected.
+logging.getLogger().setLevel(logging.WARNING)
 for _noisy in ("nemo_logger", "lhotse", "nemo.collections", "nemo.core"):
     logging.getLogger(_noisy).setLevel(logging.ERROR)
 
