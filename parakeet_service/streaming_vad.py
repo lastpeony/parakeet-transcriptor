@@ -2,17 +2,32 @@ from __future__ import annotations
 import io, wave, tempfile, numpy as np, torch
 from typing import List
 from torch.hub import load as torch_hub_load
+from concurrent.futures import ThreadPoolExecutor
+import asyncio
+from parakeet_service.config import (
+    VAD_THRESHOLD, VAD_MIN_SILENCE_MS, VAD_SPEECH_PAD_MS,
+    VAD_PERIODIC_FLUSH_MS,
+)
 
-vad_model, vad_utils = torch_hub_load("snakers4/silero-vad", "silero_vad")
-(_, _, _, VADIterator, _) = vad_utils
+# Thread pool for CPU-bound VAD operations
+_vad_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="vad")
 
-# TODO: Update to read from .env
-SAMPLE_RATE              = 16_000         # model is trained for 16 kHz
-WINDOW_SAMPLES           = 512            # 32 ms frame
-THRESHOLD                = 0.60           # voice prob ≥ 0.60 → speech
-MIN_SILENCE_MS           = 250            # flush after ≥250 ms quiet
-SPEECH_PAD_MS            = 120            # keep 120 ms context before/after
-MAX_SPEECH_MS            = 8_000          # hard stop at 8 s
+# Load VADIterator class once (shared), but each instance gets its own model
+_, _vad_utils = torch_hub_load("snakers4/silero-vad", "silero_vad")
+(_, _, _, VADIterator, _) = _vad_utils
+
+
+def _load_vad_model():
+    """Load a fresh VAD model instance (CPU only, ~2MB)."""
+    model, _ = torch_hub_load("snakers4/silero-vad", "silero_vad")
+    return model
+
+SAMPLE_RATE              = 16_000             # model is trained for 16 kHz
+WINDOW_SAMPLES           = 512                # 32 ms frame (Silero hard requirement)
+THRESHOLD                = VAD_THRESHOLD      # VAD_THRESHOLD env var (default 0.35)
+MIN_SILENCE_MS           = VAD_MIN_SILENCE_MS # VAD_MIN_SILENCE_MS env var (default 200)
+SPEECH_PAD_MS            = VAD_SPEECH_PAD_MS  # VAD_SPEECH_PAD_MS env var (default 150)
+PERIODIC_FLUSH_MS        = VAD_PERIODIC_FLUSH_MS  # VAD_PERIODIC_FLUSH_MS env var (default 6000)
 
 # Helper: float32 → int16 PCM bytes
 def _f32_to_pcm16(frames: np.ndarray) -> bytes:
@@ -25,8 +40,10 @@ class StreamingVAD:
     """
 
     def __init__(self):
+        # Each instance gets its own VAD model (thread-safe)
+        self._vad_model = _load_vad_model()
         self.vad = VADIterator(
-            vad_model,
+            self._vad_model,
             sampling_rate=SAMPLE_RATE,
             threshold=THRESHOLD,
             min_silence_duration_ms=MIN_SILENCE_MS,
@@ -34,6 +51,7 @@ class StreamingVAD:
         )
         self.buffer = bytearray()
         self.speech_ms = 0
+        self.leftover = np.array([], dtype=np.float32)
 
 
     def _flush(self) -> List[str]:
@@ -53,20 +71,31 @@ class StreamingVAD:
     def feed(self, frame_bytes: bytes) -> List[str]:
         out: List[str] = []
 
-        pcm_f32 = np.frombuffer(frame_bytes, np.int16).astype("float32") / 32768
-        for start in range(0, len(pcm_f32), WINDOW_SAMPLES):
-            window = pcm_f32[start:start + WINDOW_SAMPLES]
-            if len(window) < WINDOW_SAMPLES:
-                break  # wait for full 32 ms window
+        incoming = np.frombuffer(frame_bytes, np.int16).astype("float32") / 32768
+        # Prepend any leftover samples from the previous frame so no audio is dropped.
+        # Red5Pro sends 40ms (640 samples); WINDOW_SAMPLES=512, leaving 128 samples
+        # unprocessed each call without this accumulator.
+        pcm_f32 = np.concatenate((self.leftover, incoming)) if len(self.leftover) else incoming
+
+        n_complete = len(pcm_f32) // WINDOW_SAMPLES
+        self.leftover = pcm_f32[n_complete * WINDOW_SAMPLES:]  # save tail for next call
+
+        for i in range(n_complete):
+            window = pcm_f32[i * WINDOW_SAMPLES:(i + 1) * WINDOW_SAMPLES]
 
             voice_event = self.vad(window, return_seconds=False)
             self.buffer.extend(_f32_to_pcm16(window))
             self.speech_ms += 32
 
-            # Flush on trailing-silence event or max-length guard
+            # Flush on trailing-silence event or periodic guard
             if voice_event and voice_event.get("end"):
                 out.extend(self._flush())
-            elif self.speech_ms >= MAX_SPEECH_MS:
+            elif self.speech_ms >= PERIODIC_FLUSH_MS:
                 out.extend(self._flush())
 
         return out
+
+    async def feed_async(self, frame_bytes: bytes) -> List[str]:
+        """Async wrapper that runs VAD in thread pool to avoid blocking event loop."""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(_vad_executor, self.feed, frame_bytes)

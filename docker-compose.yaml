@@ -7,8 +7,13 @@ services:
     # env_file: .env               # TODO
     environment:
       LOG_LEVEL: "INFO"
+      # Set NEMO_MODEL_PATH to load from a local .nemo file instead of downloading.
+      # Uncomment and adjust the path below if the model file is available on the host.
+      # NEMO_MODEL_PATH: /models/parakeet-tdt-0.6b-v2.nemo
     volumes:
       - ./data/cache:/root/.cache
+      # Mount the directory that contains the .nemo file (uncomment when using NEMO_MODEL_PATH):
+      # - /path/on/host/to/models:/models:ro
     # deploy:
     #   resources:
     #     limits:

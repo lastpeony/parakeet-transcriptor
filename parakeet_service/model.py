@@ -5,7 +5,7 @@ import torch, asyncio
 import nemo.collections.asr as nemo_asr
 from omegaconf import open_dict
 
-from .config import MODEL_NAME, MODEL_PRECISION, DEVICE, logger
+from .config import MODEL_NAME, NEMO_MODEL_PATH, MODEL_PRECISION, DEVICE, NUM_THREADS, logger
 
 from parakeet_service.batchworker import batch_worker
 
@@ -27,22 +27,33 @@ def _to_builtin(obj):
 @asynccontextmanager
 async def lifespan(app):
     """Load model once per process; free GPU on shutdown."""
-    logger.info("Loading %s with optimized memory...", MODEL_NAME)
-    with torch.inference_mode():
-        # Determine precision
-        dtype = torch.float16 if MODEL_PRECISION == "fp16" else torch.float32
-        
-        # Load model with configurable device and precision
-        model = nemo_asr.models.ASRModel.from_pretrained(
-            MODEL_NAME, 
-            map_location=DEVICE
-        ).to(dtype=dtype)
-        logger.info("Loaded model with %s weights on %s", MODEL_PRECISION.upper(), DEVICE)
+    dtype = torch.float16 if MODEL_PRECISION == "fp16" else torch.float32
+
+    if NEMO_MODEL_PATH:
+        logger.info("Loading model from local file: %s", NEMO_MODEL_PATH)
+        with torch.inference_mode():
+            model = nemo_asr.models.ASRModel.restore_from(
+                NEMO_MODEL_PATH,
+                map_location=DEVICE,
+            ).to(dtype=dtype)
+    else:
+        logger.info("Downloading %s from pretrained hub...", MODEL_NAME)
+        with torch.inference_mode():
+            model = nemo_asr.models.ASRModel.from_pretrained(
+                MODEL_NAME,
+                map_location=DEVICE,
+            ).to(dtype=dtype)
+
+    logger.info("Loaded model with %s weights on %s", MODEL_PRECISION.upper(), DEVICE)
         
     # Aggressive cleanup
     gc.collect()
     torch.cuda.empty_cache()
     logger.info("Memory cleanup complete")
+
+    # Configure CPU threading for VAD (after CUDA init)
+    torch.set_num_threads(NUM_THREADS)
+    logger.info("CPU threading: %d threads", torch.get_num_threads())
 
     app.state.asr_model = model
     logger.info("Model ready on %s", next(model.parameters()).device)

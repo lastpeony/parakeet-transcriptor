@@ -23,7 +23,7 @@ async def ws_asr(ws: WebSocket):
         try:
             while True:
                 frame = await ws.receive_bytes()
-                for chunk in vad.feed(frame):
+                for chunk in await vad.feed_async(frame):
                     tagged_chunk = (connection_id, chunk)
                     await transcription_queue.put(tagged_chunk)
                     await ws.send_json({"status": "queued"})
