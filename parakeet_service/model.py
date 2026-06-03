@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 import contextlib
 import gc
+import logging
 import torch, asyncio
 import nemo.collections.asr as nemo_asr
 from omegaconf import open_dict
@@ -8,6 +9,12 @@ from omegaconf import open_dict
 from .config import MODEL_NAME, NEMO_MODEL_PATH, MODEL_PRECISION, DEVICE, NUM_THREADS, logger
 
 from parakeet_service.batchworker import batch_worker, transcription_queue, connection_queues
+
+# Dedicated logger with an explicit level: the shared `parakeet_service` logger
+# inherits the root WARNING level (see config.py), which would swallow these
+# INFO heartbeats.
+hb_logger = logging.getLogger("heartbeat")
+hb_logger.setLevel(logging.INFO)
 
 try:
     import psutil
@@ -30,7 +37,7 @@ async def _memory_heartbeat(interval_s: float = 30.0):
     """
     while True:
         await asyncio.sleep(interval_s)
-        logger.info(
+        hb_logger.info(
             "HEARTBEAT | active_connections=%d | transcription_queue=%d | rss=%s",
             len(connection_queues), transcription_queue.qsize(), _rss_mb(),
         )
@@ -88,7 +95,7 @@ async def lifespan(app):
     logger.info("batch_worker scheduled")
 
     app.state.heartbeat = asyncio.create_task(_memory_heartbeat(), name="memory_heartbeat")
-    logger.info("memory_heartbeat scheduled")
+    hb_logger.info("memory_heartbeat scheduled")
 
     try:
         yield
