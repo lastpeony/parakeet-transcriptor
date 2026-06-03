@@ -3,7 +3,11 @@ from parakeet_service.streaming_vad import StreamingVAD
 # Make sure this import path matches your project structure
 from parakeet_service.batchworker import transcription_queue, connection_queues
 import asyncio
+import logging
 import uuid
+
+logger = logging.getLogger("stream")
+logger.setLevel(logging.DEBUG)
 
 router = APIRouter()
 
@@ -18,6 +22,11 @@ async def ws_asr(ws: WebSocket):
 
     vad = StreamingVAD()
 
+    logger.info(
+        "OPEN  %s | active=%d | transcription_queue=%d",
+        connection_id[:8], len(connection_queues), transcription_queue.qsize(),
+    )
+
     async def producer():
 
         try:
@@ -28,7 +37,14 @@ async def ws_asr(ws: WebSocket):
                     await transcription_queue.put(tagged_chunk)
                     await ws.send_json({"status": "queued"})
         except WebSocketDisconnect:
-            pass
+            # Client is gone, but in the gather() design the consumer is still
+            # parked on my_queue.get(), so gather() never returns and the finally
+            # cleanup below never runs. Watch for the ABSENCE of a matching CLOSE
+            # line and a heartbeat 'active_connections' that never drops.
+            logger.info(
+                "DISCONNECT %s | producer saw client disconnect (cleanup pending on gather)",
+                connection_id[:8],
+            )
 
     async def consumer():
 
@@ -43,4 +59,7 @@ async def ws_asr(ws: WebSocket):
     finally:
 
         connection_queues.pop(connection_id, None)
-        print(f"Connection {connection_id} closed and cleaned up.")
+        logger.info(
+            "CLOSE %s | cleaned_up | active=%d | transcription_queue=%d",
+            connection_id[:8], len(connection_queues), transcription_queue.qsize(),
+        )
