@@ -1,13 +1,46 @@
 from contextlib import asynccontextmanager
 import contextlib
 import gc
+import logging
 import torch, asyncio
 import nemo.collections.asr as nemo_asr
 from omegaconf import open_dict
 
 from .config import MODEL_NAME, NEMO_MODEL_PATH, MODEL_PRECISION, DEVICE, NUM_THREADS, logger
 
-from parakeet_service.batchworker import batch_worker
+from parakeet_service.batchworker import batch_worker, transcription_queue, connection_queues
+
+# Dedicated logger with an explicit level: the shared `parakeet_service` logger
+# inherits the root WARNING level (see config.py), which would swallow these
+# INFO heartbeats.
+hb_logger = logging.getLogger("heartbeat")
+hb_logger.setLevel(logging.INFO)
+
+try:
+    import psutil
+    _proc = psutil.Process()
+except Exception:
+    _proc = None
+
+
+def _rss_mb() -> str:
+    if _proc is None:
+        return "n/a (install psutil)"
+    return f"{_proc.memory_info().rss / (1024 * 1024):.1f} MB"
+
+
+async def _memory_heartbeat(interval_s: float = 30.0):
+    """Periodically log active-connection count, queue depth, and process RSS.
+
+    A steadily climbing 'active' count or RSS while no clients are connected is
+    the direct signature of the connection leak.
+    """
+    while True:
+        await asyncio.sleep(interval_s)
+        hb_logger.info(
+            "HEARTBEAT | active_connections=%d | transcription_queue=%d | rss=%s",
+            len(connection_queues), transcription_queue.qsize(), _rss_mb(),
+        )
 
 
 def _to_builtin(obj):
@@ -61,9 +94,16 @@ async def lifespan(app):
     app.state.worker = asyncio.create_task(batch_worker(model), name="batch_worker")
     logger.info("batch_worker scheduled")
 
+    app.state.heartbeat = asyncio.create_task(_memory_heartbeat(), name="memory_heartbeat")
+    hb_logger.info("memory_heartbeat scheduled")
+
     try:
         yield
     finally:
+        app.state.heartbeat.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await app.state.heartbeat
+
         app.state.worker.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await app.state.worker
