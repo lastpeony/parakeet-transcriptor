@@ -1,7 +1,7 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from parakeet_service.streaming_vad import StreamingVAD
 # Make sure this import path matches your project structure
-from parakeet_service.batchworker import transcription_queue, connection_queues
+from parakeet_service.batchworker import connection_queues, submit_chunk, pending_requests
 import asyncio
 import contextlib
 import logging
@@ -24,8 +24,8 @@ async def ws_asr(ws: WebSocket):
     vad = await StreamingVAD.create_async()
 
     logger.info(
-        "OPEN  %s | active=%d | transcription_queue=%d",
-        connection_id[:8], len(connection_queues), transcription_queue.qsize(),
+        "OPEN  %s | active=%d | inference_queue=%d",
+        connection_id[:8], len(connection_queues), pending_requests(),
     )
 
     async def producer():
@@ -34,8 +34,7 @@ async def ws_asr(ws: WebSocket):
             while True:
                 frame = await ws.receive_bytes()
                 for chunk in await vad.feed_async(frame):
-                    tagged_chunk = (connection_id, chunk)
-                    await transcription_queue.put(tagged_chunk)
+                    submit_chunk(connection_id, chunk)
                     await ws.send_json({"status": "queued"})
         except WebSocketDisconnect:
             logger.info("DISCONNECT %s | producer saw client disconnect", connection_id[:8])
@@ -73,7 +72,7 @@ async def ws_asr(ws: WebSocket):
     finally:
         removed = connection_queues.pop(connection_id, None)
         logger.info(
-            "CLOSE %s | cleaned_up=%s | active=%d | transcription_queue=%d",
+            "CLOSE %s | cleaned_up=%s | active=%d | inference_queue=%d",
             connection_id[:8], removed is not None,
-            len(connection_queues), transcription_queue.qsize(),
+            len(connection_queues), pending_requests(),
         )
