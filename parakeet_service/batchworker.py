@@ -1,4 +1,5 @@
 import asyncio, contextlib, logging, tempfile, pathlib, time, wave, torch
+from concurrent.futures import ThreadPoolExecutor
 from typing import Union, List, Tuple
 from parakeet_service import model as mdl
 from parakeet_service.config import VAD_MIN_CHUNK_MS
@@ -7,6 +8,9 @@ MIN_CHUNK_DURATION_S = VAD_MIN_CHUNK_MS / 1000.0
 
 logger = logging.getLogger("batcher")
 logger.setLevel(logging.DEBUG)
+
+# Serialized GPU inference, but off the event loop so it can't block keepalive pings.
+_asr_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="asr")
 
 
 transcription_queue: asyncio.Queue[Tuple[str, Union[str, bytes]]] = asyncio.Queue()
@@ -67,9 +71,14 @@ async def batch_worker(model, batch_ms: float = 15.0, max_batch: int = 4):
         logger.debug("processing %d-file batch", len(batch))
 
         file_paths_for_model = [fp for _, fp in batch]
-        try:
+
+        def _run_transcribe():
             with torch.inference_mode():
-                outs = model.transcribe(file_paths_for_model, batch_size=len(file_paths_for_model), verbose=False)
+                return model.transcribe(file_paths_for_model, batch_size=len(file_paths_for_model), verbose=False)
+
+        try:
+            loop = asyncio.get_running_loop()
+            outs = await loop.run_in_executor(_asr_executor, _run_transcribe)
         except Exception as exc:
             logger.exception("ASR failed: %s", exc)
             for _ in batch:

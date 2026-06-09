@@ -21,7 +21,7 @@ async def ws_asr(ws: WebSocket):
 
     connection_queues[connection_id] = asyncio.Queue()
 
-    vad = StreamingVAD()
+    vad = await StreamingVAD.create_async()
 
     logger.info(
         "OPEN  %s | active=%d | transcription_queue=%d",
