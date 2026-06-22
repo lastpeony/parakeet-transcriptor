@@ -8,11 +8,9 @@ from collections import defaultdict
 from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Query, UploadFile, status, Request, Form
 
 from .audio import ensure_mono_16k, schedule_cleanup
-from .model import _to_builtin
 from .schemas import TranscriptionResponse
 from .config import logger
 
-from parakeet_service.model import reset_fast_path
 from parakeet_service.chunker import vad_chunk_lowmem, vad_chunk_streaming
 
 
@@ -159,35 +157,23 @@ async def transcribe_audio(
         cleanup_files.append(mp3_tmp_path)
     schedule_cleanup(background_tasks, *cleanup_files)
 
-    # 2 – run ASR
-    model = request.app.state.asr_model
+    # 2 – run ASR in the dedicated inference process
+    manager = request.app.state.inference
 
-    try:
-        outs = model.transcribe(
-            [str(p) for p in chunk_paths],
-            batch_size=2,
-            timestamps=include_timestamps,
-        )
-        if (
-          not include_timestamps                     # switch back to model fast-path if timestamps turned off
-          and getattr(model.cfg.decoding, "compute_timestamps", False)
-        ):
-          reset_fast_path(model)                    
-    except RuntimeError as exc:
-        logger.exception("ASR failed")
+    payload = await manager.transcribe_job(
+        [str(p) for p in chunk_paths], include_timestamps,
+    )
+    if isinstance(payload, dict) and "error" in payload:
+        logger.error("ASR failed: %s", payload["error"])
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                            detail=str(exc)) from exc
+                            detail=payload["error"])
 
-    if isinstance(outs, tuple):
-      outs = outs[0]
     texts = []
-    ts_agg = [] if include_timestamps else None
     merged = defaultdict(list)
-
-    for h in outs:
-        texts.append(getattr(h, "text", str(h)))
+    for h in payload:
+        texts.append(h["text"])
         if include_timestamps:
-            for k, v in _to_builtin(getattr(h, "timestamp", {})).items():
+            for k, v in h["timestamp"].items():
                 merged[k].extend(v)           # concat lists
 
     merged_text = " ".join(texts).strip()
@@ -196,8 +182,5 @@ async def transcribe_audio(
     return TranscriptionResponse(text=merged_text, timestamps=timestamps)
 
 @router.get("/debug/cfg")
-def show_cfg(request: Request):
-    from omegaconf import OmegaConf
-    model = request.app.state.asr_model         
-    yaml_str = OmegaConf.to_yaml(model.cfg, resolve=True) 
-    return yaml_str
+async def show_cfg(request: Request):
+    return await request.app.state.inference.get_cfg()

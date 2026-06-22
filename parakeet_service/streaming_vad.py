@@ -12,6 +12,9 @@ from parakeet_service.config import (
 # Thread pool for CPU-bound VAD operations
 _vad_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="vad")
 
+# Separate pool for model construction so it can't starve latency-sensitive feed() calls.
+_vad_init_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="vad-init")
+
 # Load VADIterator class once (shared), but each instance gets its own model
 _, _vad_utils = torch_hub_load("snakers4/silero-vad", "silero_vad")
 (_, _, _, VADIterator, _) = _vad_utils
@@ -52,6 +55,12 @@ class StreamingVAD:
         self.buffer = bytearray()
         self.speech_ms = 0
         self.leftover = np.array([], dtype=np.float32)
+
+    @classmethod
+    async def create_async(cls) -> "StreamingVAD":
+        # __init__ does a torch.hub.load; build it off the event loop.
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(_vad_init_executor, cls)
 
 
     def _flush(self) -> List[str]:
